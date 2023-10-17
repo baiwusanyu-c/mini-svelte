@@ -147,7 +147,7 @@ function analyse(ast) {
       if (map.has(node)) currentScope = map.get(node);
       if (
         node.type === 'UpdateExpression' ||
-        node.type === 'AssignmentExpression'
+        node.type === 'AssignmentExpression' // 处理并收集分配表达式的变量名称，以便生成更新代码
       ) {
         const names = periscopic.extract_names(
           node.type === 'UpdateExpression' ? node.argument : node.left
@@ -182,7 +182,6 @@ function analyse(ast) {
     }
   }
   ast.html.forEach((fragment) => traverse(fragment));
-
   return result;
 }
 function generate(ast, analysis) {
@@ -236,13 +235,22 @@ function generate(ast, analysis) {
       }
       case 'Expression': {
         const variableName = `txt_${counter++}`;
+        // 针对节点生成表达式字符串
+        // <div>{counter} x 2 = {counter * 2}</div>
+        // 第一次进入会生成 counter
+        // 第二次进入会生成 counter * 2
         const expressionStr = escodegen.generate(node.expression);
+        // 处理变量
         code.variables.push(variableName);
         code.create.push(
           `${variableName} = document.createTextNode(${expressionStr})`
         );
         code.create.push(`${parent}.appendChild(${variableName});`);
+
+
         const names = extract_names(node.expression);
+        // 循环
+        // 找到表达式中会改变的变量值
         if (names.some((name) => analysis.willChange.has(name))) {
           const changes = new Set();
           names.forEach((name) => {
@@ -251,6 +259,7 @@ function generate(ast, analysis) {
             }
           });
           let condition;
+          // 生成更新代码
           if (changes.size > 1) {
             condition = `${JSON.stringify(
               Array.from(changes)
@@ -280,6 +289,8 @@ function generate(ast, analysis) {
       ) {
         const names = periscopic
           .extract_names(
+              // 这个三元是处理分配表达式的
+              // counter += 1
             node.type === 'UpdateExpression' ? node.argument : node.left
           )
           .filter(
@@ -288,6 +299,7 @@ function generate(ast, analysis) {
               analysis.willUseInTemplate.has(name)
           );
         if (names.length > 0) {
+          // 生成 生命周期 调用 更新代码
           this.replace({
             type: 'SequenceExpression',
             expressions: [
@@ -329,15 +341,24 @@ function generate(ast, analysis) {
   `;
 }
 
+/**
+ * 提取 ast 的表达式名称
+ * {counter} x 2 = {counter * 2}
+ * @param jsNode
+ * @param result
+ * @returns {*[]}
+ */
 function extract_names(jsNode, result = []) {
   switch (jsNode.type) {
     case 'Identifier':
       result.push(jsNode.name);
       break;
-    case 'BinaryExpression':
+    case 'BinaryExpression': // 处理二元表达式
+      // x * y， 对 * 节点进行左边和右边的处理，即递归的执行获取到 x 和 y
       extract_names(jsNode.left, result);
       extract_names(jsNode.right, result);
       break;
+    //....
   }
   return result;
 }

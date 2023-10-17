@@ -5,5 +5,5 @@
 </script>
 
 <button on:click={decrement}>Decrement</button>
-<div>{counter}</div>
+<div>{counter} x 2 = {counter * 2}</div>
 <button on:click={increment}>Increment</button>
