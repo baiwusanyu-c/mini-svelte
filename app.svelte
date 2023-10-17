@@ -4,6 +4,6 @@
   const decrement = () => counter--;
 </script>
 
-<button on:click={decrement}>Decrement</button>
+<button on:click={decrement} id={"button_test"}>Decrement</button>
 <div>{counter}</div>
 <button on:click={increment}>Increment</button>
