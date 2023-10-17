@@ -143,14 +143,18 @@ function analyse(ast) {
 
   const reactiveDeclarations = [];
   const toRemove = new Set();
+  // svelte 的 $: xxx 语法只考虑在 根 body 下的 LabeledStatement 节点
   ast.script.body.forEach((node, index) => {
     if (node.type === 'LabeledStatement' && node.label.name === '$') {
+      // 记录需要删除的节点($ 的节点)
       toRemove.add(node);
       const body = node.body;
+      // left 是可变化的变量，放到 willChange 中
       const left = body.expression.left;
+      // right 是left 的依赖
       const right = body.expression.right;
       const dependencies = [];
-
+      // 遍历 right，拿到变量名，存到 dependencies
       estreewalker.walk(right, {
         enter(node) {
           if (node.type === 'Identifier') {
@@ -158,7 +162,9 @@ function analyse(ast) {
           }
         },
       });
+      // left 是可变化的变量，放到 willChange 中
       result.willChange.add(left.name);
+      // 组合成一个 reactiveDeclaration 节点，代码生成时使用
       const reactiveDeclaration = {
         assignees: [left.name],
         dependencies: dependencies,
@@ -168,6 +174,7 @@ function analyse(ast) {
       reactiveDeclarations.push(reactiveDeclaration);
     }
   });
+  // 过滤 $ 节点
   ast.script.body = ast.script.body.filter((node) => !toRemove.has(node));
   result.reactiveDeclarations = reactiveDeclarations;
 
@@ -185,6 +192,8 @@ function analyse(ast) {
         for (const name of names) {
           if (
             currentScope.find_owner(name) === rootScope ||
+              // 响应式的声明，是在全局作用域的，这里用 global 把它收集到 willChange
+              // $: bar = foo + 5;
             globals.has(name)
           ) {
             result.willChange.add(name);
@@ -344,8 +353,14 @@ function generate(ast, analysis) {
   // [1,2,3].sort((a, b) => a - b)
   // if (a > b) a-b > 1
   // if (b > a) a-b > -1
+  // $ 响应式变量可能依赖于另一个 $ 响应式变量，因此需要严格控制其副作用执行顺序
+  // 这里根据 dependencies 依赖关系进行排序
   analysis.reactiveDeclarations.sort((rd1, rd2) => {
     // rd2 depends on what rd1 changes
+    //  $: quadruple = double * 2;
+    //  $: double = counter * 2 + bar;
+    // [quadruple, double] =》 [double, quadruple]
+    // 这个例子就是先执行 double， 更新后再执行 quadruple
     if (rd1.assignees.some((assignee) => rd2.dependencies.includes(assignee))) {
       // rd2 should come after rd1
       return -1;
@@ -362,6 +377,13 @@ function generate(ast, analysis) {
   });
 
   analysis.reactiveDeclarations.forEach(
+      // 遍历 生成代码
+      // $: bar = foo + 5;
+      // if (["foo"].some(name => collectChanges.includes(name))) {
+      //   bar = foo + 5;
+      //   更新到 dom
+      //   update(["bar"]);
+      //  }
     ({ node, index, assignees, dependencies }) => {
       code.reactiveDeclarations.push(`
       if (${JSON.stringify(
@@ -371,6 +393,7 @@ function generate(ast, analysis) {
         update(${JSON.stringify(assignees)});
       }
     `);
+      // $ 相关变量添加到 variables 以便生成变量声明代码
       assignees.forEach((assignee) => code.variables.push(assignee));
     }
   );
@@ -378,27 +401,36 @@ function generate(ast, analysis) {
   return `
     export default function() {
       ${code.variables.map((v) => `let ${v};`).join('\n')}
-
+      
       let collectChanges = [];
       let updateCalled = false;
       function update(changed) {
+        // 收集要变化的变量名
         changed.forEach(c => collectChanges.push(c));
-    
+        // 上锁，避免多个变量变化多次调用 update 时，重复执行
+        // 锁上时，只会收集这些变量名到 collectChanges
         if (updateCalled) return;
         updateCalled = true;
-    
-        // first call
+   
+        // 更新 $ 定义的变量
         update_reactive_declarations();
+        // 更新其他变量到dom（这里应该可以优化，$ 定义的相关变量已经更新过dom了）
         if (typeof lifecycle !== 'undefined') lifecycle.update(collectChanges);
         collectChanges = [];
         updateCalled = false;
       }
 
       ${escodegen.generate(ast.script)}
-
+      // 初始化首次，执行一次
       update(${JSON.stringify(Array.from(analysis.willChange))});
-
+      // 更新 $ 响应式代码块的方法
       function update_reactive_declarations() {
+        // $: bar = foo + 5;
+        // if (["foo"].some(name => collectChanges.includes(name))) {
+        //   bar = foo + 5;
+        //   更新到 dom
+        //   update(["bar"]);
+        //  }
         ${code.reactiveDeclarations.join('\n')}
       }
 
@@ -407,6 +439,7 @@ function generate(ast, analysis) {
           ${code.create.join('\n')}
         },
         update(changed) {
+          // 这个更新方法，实际上时将响应式变量值更新到dom
           ${code.update.join('\n')}
         },
         destroy() {

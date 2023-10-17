@@ -1,14 +1,14 @@
 <script>
-  let counter = 5;
-  let foo = 5;
-  const increment = () => counter++;
-  const decrement = () => counter--;
-  const incrementFoo = () => foo++;
-  
-  $: quadruple = double * 2;
-  $: double = counter * 2 + bar;
-  
-  $: bar = foo + 5;
+    let counter = 5;
+    let foo = 5;
+    const increment = () => counter++;
+    const decrement = () => counter--;
+    const incrementFoo = () => foo++;
+
+    $: quadruple = double * 2;
+    $: double = counter * 2 + bar;
+
+    $: bar = foo + 5;
 
 </script>
 
